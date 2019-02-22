@@ -65,6 +65,10 @@ namespace LinqToDB
 
 		#endregion
 
+		internal class ElementAsyncAttribute : Attribute
+		{
+		}
+
 		#region ForEachAsync
 
 		/// <summary>
@@ -171,6 +175,14 @@ namespace LinqToDB
 				var list = new List<TSource>();
 				await query.GetForEachAsync(list.Add, token);
 				return list.ToArray();
+
+//				var list = new List<TSource>();
+//
+//				using (var enumerator = query.GetAsyncEnumerable().GetEnumerator())
+//					while (await enumerator.MoveNext(token))
+//						list.Add(enumerator.Current);
+//
+//				return list.ToArray();
 			}
 
 			if (LinqExtensions.ExtensionsAdapter != null)
@@ -302,5 +314,6 @@ namespace LinqToDB
 		}
 
 		#endregion
+
 	}
 }

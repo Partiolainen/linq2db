@@ -15,6 +15,7 @@ using System.Xml.Linq;
 namespace LinqToDB.DataProvider
 {
 	using Data;
+	using Common;
 	using Expressions;
 	using Mapping;
 	using SchemaProvider;
@@ -30,21 +31,23 @@ namespace LinqToDB.DataProvider
 			MappingSchema    = mappingSchema;
 			SqlProviderFlags = new SqlProviderFlags
 			{
-				AcceptsTakeAsParameter         = true,
-				IsTakeSupported                = true,
-				IsSkipSupported                = true,
-				IsSubQueryTakeSupported        = true,
-				IsSubQueryColumnSupported      = true,
-				IsCountSubQuerySupported       = true,
-				IsInsertOrUpdateSupported      = true,
-				CanCombineParameters           = true,
-				MaxInListValuesCount           = int.MaxValue,
-				IsGroupByExpressionSupported   = true,
-				IsDistinctOrderBySupported     = true,
-				IsUpdateSetTableAliasSupported = true,
-				TakeHintsSupported             = null,
-				IsCrossJoinSupported           = true,
-				IsInnerJoinAsCrossSupported    = true
+				AcceptsTakeAsParameter               = true,
+				IsTakeSupported                      = true,
+				IsSkipSupported                      = true,
+				IsSubQueryTakeSupported              = true,
+				IsSubQueryColumnSupported            = true,
+				IsCountSubQuerySupported             = true,
+				IsInsertOrUpdateSupported            = true,
+				CanCombineParameters                 = true,
+				MaxInListValuesCount                 = int.MaxValue,
+				IsGroupByExpressionSupported         = true,
+				IsDistinctOrderBySupported           = true,
+				IsSubQueryOrderBySupported           = false,
+				IsUpdateSetTableAliasSupported       = true,
+				TakeHintsSupported                   = null,
+				IsCrossJoinSupported                 = true,
+				IsInnerJoinAsCrossSupported          = true,
+				IsOrderByAggregateFunctionsSupported = true,
 			};
 
 			SetField<IDataReader,bool>    ((r,i) => r.GetBoolean (i));
@@ -270,9 +273,9 @@ namespace LinqToDB.DataProvider
 
 		#region SetParameter
 
-		public virtual void SetParameter(IDbDataParameter parameter, string name, DataType dataType, object value)
+		public virtual void SetParameter(IDbDataParameter parameter, string name, DbDataType dataType, object value)
 		{
-			switch (dataType)
+			switch (dataType.DataType)
 			{
 				case DataType.Char      :
 				case DataType.NChar     :
@@ -322,9 +325,9 @@ namespace LinqToDB.DataProvider
 			parameter.Value = value ?? DBNull.Value;
 		}
 
-		public virtual Type ConvertParameterType(Type type, DataType dataType)
+		public virtual Type ConvertParameterType(Type type, DbDataType dataType)
 		{
-			switch (dataType)
+			switch (dataType.DataType)
 			{
 				case DataType.Char      :
 				case DataType.NChar     :
@@ -357,11 +360,11 @@ namespace LinqToDB.DataProvider
 		public abstract ISchemaProvider GetSchemaProvider     ();
 #endif
 
-		protected virtual void SetParameterType(IDbDataParameter parameter, DataType dataType)
+		protected virtual void SetParameterType(IDbDataParameter parameter, DbDataType dataType)
 		{
 			DbType dbType;
 
-			switch (dataType)
+			switch (dataType.DataType)
 			{
 				case DataType.Char           : dbType = DbType.AnsiStringFixedLength; break;
 				case DataType.VarChar        : dbType = DbType.AnsiString;            break;
@@ -444,9 +447,9 @@ namespace LinqToDB.DataProvider
 
 		#region BulkCopy
 
-		public virtual BulkCopyRowsCopied BulkCopy<T>(DataConnection dataConnection, BulkCopyOptions options, IEnumerable<T> source)
+		public virtual BulkCopyRowsCopied BulkCopy<T>(ITable<T> table, BulkCopyOptions options, IEnumerable<T> source)
 		{
-			return new BasicBulkCopy().BulkCopy(options.BulkCopyType, dataConnection, options, source);
+			return new BasicBulkCopy().BulkCopy(options.BulkCopyType, table, options, source);
 		}
 
 		#endregion

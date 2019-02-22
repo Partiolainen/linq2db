@@ -20,9 +20,6 @@ namespace LinqToDB.Linq.Builder
 		{
 			var sequence = builder.BuildSequence(new BuildInfo(buildInfo, methodCall.Arguments[0]));
 
-			if (sequence.SelectQuery.Select.IsDistinct)
-				sequence = new SubQueryContext(sequence);
-
 			var arg = methodCall.Arguments[1].Unwrap();
 
 			if (arg.NodeType == ExpressionType.Lambda)
@@ -95,7 +92,7 @@ namespace LinqToDB.Linq.Builder
 
 					var ep = (from pm in builder.CurrentSqlParameters where pm.SqlParameter == skip select pm).First();
 
-					ep = new ParameterAccessor(ep.Expression, ep.Accessor, ep.DataTypeAccessor, parm);
+					ep = new ParameterAccessor(ep.Expression, ep.Accessor, ep.DataTypeAccessor, ep.DbTypeAccessor, parm);
 
 					builder.CurrentSqlParameters.Add(ep);
 				}

@@ -9,8 +9,8 @@ using LinqToDB.Extensions;
 
 namespace LinqToDB.DataProvider.SqlCe
 {
-	using Common;
 	using Data;
+	using Common;
 	using Mapping;
 	using SchemaProvider;
 	using SqlProvider;
@@ -25,11 +25,13 @@ namespace LinqToDB.DataProvider.SqlCe
 		protected SqlCeDataProvider(string name, MappingSchema mappingSchema)
 			: base(name, mappingSchema)
 		{
-			SqlProviderFlags.IsSubQueryColumnSupported = false;
-			SqlProviderFlags.IsCountSubQuerySupported  = false;
-			SqlProviderFlags.IsApplyJoinSupported      = true;
-			SqlProviderFlags.IsInsertOrUpdateSupported = false;
-			SqlProviderFlags.IsCrossJoinSupported      = true;
+			SqlProviderFlags.IsSubQueryColumnSupported            = false;
+			SqlProviderFlags.IsCountSubQuerySupported             = false;
+			SqlProviderFlags.IsApplyJoinSupported                 = true;
+			SqlProviderFlags.IsInsertOrUpdateSupported            = false;
+			SqlProviderFlags.IsCrossJoinSupported                 = true;
+			SqlProviderFlags.IsDistinctOrderBySupported           = false;
+			SqlProviderFlags.IsOrderByAggregateFunctionsSupported = false;
 
 			SetCharFieldToType<char>("NChar", (r, i) => DataTools.GetChar(r, i));
 
@@ -41,6 +43,10 @@ namespace LinqToDB.DataProvider.SqlCe
 		public    override string ConnectionNamespace => "System.Data.SqlServerCe";
 		protected override string ConnectionTypeName  => $"{ConnectionNamespace}.SqlCeConnection, {ConnectionNamespace}";
 		protected override string DataReaderTypeName  => $"{ConnectionNamespace}.SqlCeDataReader, {ConnectionNamespace}";
+
+#if !NETSTANDARD1_6 && !NETSTANDARD2_0
+		public override string DbFactoryProviderName => "System.Data.SqlServerCe.4.0";
+#endif
 
 		protected override void OnConnectionTypeCreated(Type connectionType)
 		{
@@ -104,12 +110,12 @@ namespace LinqToDB.DataProvider.SqlCe
 		}
 #endif
 
-		public override void SetParameter(IDbDataParameter parameter, string name, DataType dataType, object value)
+		public override void SetParameter(IDbDataParameter parameter, string name, DbDataType dataType, object value)
 		{
-			switch (dataType)
+			switch (dataType.DataType)
 			{
 				case DataType.Xml :
-					dataType = DataType.NVarChar;
+					dataType = dataType.WithDataType(DataType.NVarChar);
 
 					if (value is SqlXml)
 					{
@@ -125,9 +131,9 @@ namespace LinqToDB.DataProvider.SqlCe
 			base.SetParameter(parameter, name, dataType, value);
 		}
 
-		protected override void SetParameterType(IDbDataParameter parameter, DataType dataType)
+		protected override void SetParameterType(IDbDataParameter parameter, DbDataType dataType)
 		{
-			switch (dataType)
+			switch (dataType.DataType)
 			{
 				case DataType.SByte      : parameter.DbType    = DbType.Int16;   break;
 				case DataType.UInt16     : parameter.DbType    = DbType.Int32;   break;
@@ -159,7 +165,7 @@ namespace LinqToDB.DataProvider.SqlCe
 
 		public void CreateDatabase([JetBrains.Annotations.NotNull] string databaseName, bool deleteIfExists = false)
 		{
-			if (databaseName == null) throw new ArgumentNullException("databaseName");
+			if (databaseName == null) throw new ArgumentNullException(nameof(databaseName));
 
 			CreateFileDatabase(
 				databaseName, deleteIfExists, ".sdf",
@@ -171,16 +177,14 @@ namespace LinqToDB.DataProvider.SqlCe
 
 					eng.CreateDatabase();
 
-					var disp = eng as IDisposable;
-
-					if (disp != null)
+					if (eng is IDisposable disp)
 						disp.Dispose();
 				});
 		}
 
 		public void DropDatabase([JetBrains.Annotations.NotNull] string databaseName)
 		{
-			if (databaseName == null) throw new ArgumentNullException("databaseName");
+			if (databaseName == null) throw new ArgumentNullException(nameof(databaseName));
 
 			DropFileDatabase(databaseName, ".sdf");
 		}
@@ -193,11 +197,11 @@ namespace LinqToDB.DataProvider.SqlCe
 		#region BulkCopy
 
 		public override BulkCopyRowsCopied BulkCopy<T>(
-			[JetBrains.Annotations.NotNull] DataConnection dataConnection, BulkCopyOptions options, IEnumerable<T> source)
+			[JetBrains.Annotations.NotNull] ITable<T> table, BulkCopyOptions options, IEnumerable<T> source)
 		{
 			return new SqlCeBulkCopy().BulkCopy(
 				options.BulkCopyType == BulkCopyType.Default ? SqlCeTools.DefaultBulkCopyType : options.BulkCopyType,
-				dataConnection,
+				table,
 				options,
 				source);
 		}

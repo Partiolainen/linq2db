@@ -8,6 +8,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 using JetBrains.Annotations;
 
@@ -26,7 +27,7 @@ namespace LinqToDB.Data
 	/// or attached to existing connection or transaction.
 	/// </summary>
 	[PublicAPI]
-	public partial class DataConnection : ICloneable, IEntityServices
+	public partial class DataConnection : ICloneable
 	{
 		#region .ctor
 
@@ -145,6 +146,50 @@ namespace LinqToDB.Data
 			DataProvider     = dataProvider     ?? throw new ArgumentNullException(nameof(dataProvider));
 			ConnectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
 			MappingSchema    = DataProvider.MappingSchema;
+		}
+
+		/// <summary>
+		/// Creates database connection object that uses specified database provider, connection factory and mapping schema.
+		/// </summary>
+		/// <param name="dataProvider">Database provider implementation to use with this connection.</param>
+		/// <param name="connectionFactory">Database connection factory method.</param>
+		/// <param name="mappingSchema">Mapping schema to use with this connection.</param>
+		public DataConnection(
+			[JetBrains.Annotations.NotNull] IDataProvider       dataProvider,
+			[JetBrains.Annotations.NotNull] Func<IDbConnection> connectionFactory,
+			[JetBrains.Annotations.NotNull] MappingSchema       mappingSchema)
+			: this(dataProvider, connectionFactory)
+		{
+			AddMappingSchema(mappingSchema);
+		}
+
+		/// <summary>
+		/// Creates database connection object that uses specified database provider and connection factory.
+		/// </summary>
+		/// <param name="dataProvider">Database provider implementation to use with this connection.</param>
+		/// <param name="connectionFactory">Database connection factory method.</param>
+		public DataConnection(
+			[JetBrains.Annotations.NotNull] IDataProvider       dataProvider,
+			[JetBrains.Annotations.NotNull] Func<IDbConnection> connectionFactory)
+		{
+			if (dataProvider      == null) throw new ArgumentNullException(nameof(dataProvider));
+			if (connectionFactory == null) throw new ArgumentNullException(nameof(connectionFactory));
+
+			InitConfig();
+
+			DataProvider       = dataProvider;
+			MappingSchema      = DataProvider.MappingSchema;
+
+			_connectionFactory = () =>
+			{
+				var connection = connectionFactory();
+
+				if (!Configuration.AvoidSpecificDataProviderAPI && !DataProvider.IsCompatibleConnection(connection))
+					throw new LinqToDBException(
+						$"DataProvider '{DataProvider}' and connection '{connection}' are not compatible.");
+
+				return connection;
+			};
 		}
 
 		/// <summary>
@@ -364,8 +409,8 @@ namespace LinqToDB.Data
 				case TraceInfoStep.AfterExecute:
 					WriteTraceLine(
 						info.RecordsAffected != null
-							? $"Query Execution Time ({info.TraceInfoStep}) {(info.IsAsync ? " (async)" : "")}: {info.ExecutionTime}. Records Affected: {info.RecordsAffected}.\r\n"
-							: $"Query Execution Time ({info.TraceInfoStep}) {(info.IsAsync ? " (async)" : "")}: {info.ExecutionTime}\r\n",
+							? $"Query Execution Time ({info.TraceInfoStep}){(info.IsAsync ? " (async)" : "")}: {info.ExecutionTime}. Records Affected: {info.RecordsAffected}.\r\n"
+							: $"Query Execution Time ({info.TraceInfoStep}){(info.IsAsync ? " (async)" : "")}: {info.ExecutionTime}\r\n",
 						TraceSwitch.DisplayName);
 					break;
 
@@ -894,10 +939,11 @@ namespace LinqToDB.Data
 
 		#region Connection
 
-		bool          _closeConnection;
-		bool          _disposeConnection = true;
-		bool          _closeTransaction;
-		IDbConnection _connection;
+		bool                _closeConnection;
+		bool                _disposeConnection = true;
+		bool                _closeTransaction;
+		IDbConnection       _connection;
+		Func<IDbConnection> _connectionFactory;
 
 		/// <summary>
 		/// Gets underlying database connection, used by current connection object.
@@ -908,16 +954,22 @@ namespace LinqToDB.Data
 			{
 				if (_connection == null)
 				{
-					_connection = DataProvider.CreateConnection(ConnectionString);
+					if (_connectionFactory != null)
+						_connection = _connectionFactory();
+					else
+						_connection = DataProvider.CreateConnection(ConnectionString);
 
 					if (RetryPolicy != null)
 						_connection = new RetryingDbConnection(this, (DbConnection)_connection, RetryPolicy);
+
 				}
 
 				if (_connection.State == ConnectionState.Closed)
 				{
+					OnBeforeConnectionOpen?.Invoke(this, _connection);
 					_connection.Open();
 					_closeConnection = true;
+					OnConnectionOpened?.Invoke(this, _connection);
 				}
 
 				return _connection;
@@ -934,7 +986,27 @@ namespace LinqToDB.Data
 		public event EventHandler OnClosed;
 
 		/// <inheritdoc />
-		public Action<EntityCreatedEventArgs> OnEntityCreated { get; set; }
+		public Action<EntityCreatedEventArgs> OnEntityCreated    { get; set; }
+
+		/// <summary>
+		/// Event, triggered before connection opened using <see cref="IDbConnection.Open"/> method.
+		/// </summary>
+		public event Action<DataConnection, IDbConnection> OnBeforeConnectionOpen;
+
+		/// <summary>
+		/// Event, triggered before connection opened using <see cref="DbConnection.OpenAsync()"/> methods.
+		/// </summary>
+		public event Func<DataConnection, IDbConnection, CancellationToken, Task> OnBeforeConnectionOpenAsync;
+
+		/// <summary>
+		/// Event, triggered right after connection opened using <see cref="IDbConnection.Open"/> method.
+		/// </summary>
+		public event Action<DataConnection, IDbConnection> OnConnectionOpened;
+
+		/// <summary>
+		/// Event, triggered right after connection opened using <see cref="DbConnection.OpenAsync()"/> methods.
+		/// </summary>
+		public event Func<DataConnection, IDbConnection, CancellationToken, Task> OnConnectionOpenedAsync;
 
 		/// <summary>
 		/// Closes and dispose associated underlying database transaction/connection.
@@ -976,7 +1048,7 @@ namespace LinqToDB.Data
 
 		internal void InitCommand(CommandType commandType, string sql, DataParameter[] parameters, List<string> queryHints)
 		{
-			if (queryHints != null && queryHints.Count > 0)
+			if (queryHints?.Count > 0)
 			{
 				var sqlProvider = DataProvider.CreateSqlBuilder();
 				sql = sqlProvider.ApplyQueryHints(sql, queryHints);
@@ -994,7 +1066,12 @@ namespace LinqToDB.Data
 		public  int   CommandTimeout
 		{
 			get => _commandTimeout ?? 0;
-			set => _commandTimeout = value;
+			set
+			{
+				_commandTimeout = value;
+				if (_command != null)
+					_command.CommandTimeout = value;
+			}
 		}
 
 		private IDbCommand _command;
@@ -1041,6 +1118,9 @@ namespace LinqToDB.Data
 				using (DataProvider.ExecuteScope())
 					return Command.ExecuteNonQuery();
 
+			var now = DateTime.UtcNow;
+			var sw  = Stopwatch.StartNew();
+
 			if (TraceSwitch.TraceInfo)
 			{
 				OnTraceConnection(new TraceInfo(TraceInfoStep.BeforeExecute)
@@ -1048,10 +1128,10 @@ namespace LinqToDB.Data
 					TraceLevel     = TraceLevel.Info,
 					DataConnection = this,
 					Command        = Command,
+					StartTime      = now,
 				});
 			}
 
-			var now = DateTime.Now;
 
 			try
 			{
@@ -1066,7 +1146,8 @@ namespace LinqToDB.Data
 						TraceLevel      = TraceLevel.Info,
 						DataConnection  = this,
 						Command         = Command,
-						ExecutionTime   = DateTime.Now - now,
+						StartTime       = now,
+						ExecutionTime   = sw.Elapsed,
 						RecordsAffected = ret,
 					});
 				}
@@ -1082,7 +1163,8 @@ namespace LinqToDB.Data
 						TraceLevel     = TraceLevel.Error,
 						DataConnection = this,
 						Command        = Command,
-						ExecutionTime  = DateTime.Now - now,
+						StartTime      = now,
+						ExecutionTime  = sw.Elapsed,
 						Exception      = ex,
 					});
 				}
@@ -1096,17 +1178,19 @@ namespace LinqToDB.Data
 			if (TraceSwitch.Level == TraceLevel.Off || OnTraceConnection == null)
 				return Command.ExecuteScalar();
 
+			var now = DateTime.UtcNow;
+			var sw  = Stopwatch.StartNew();
+
 			if (TraceSwitch.TraceInfo)
 			{
 				OnTraceConnection(new TraceInfo(TraceInfoStep.BeforeExecute)
 				{
 					TraceLevel     = TraceLevel.Info,
 					DataConnection = this,
-					Command        = Command
+					Command        = Command,
+					StartTime      = now,
 				});
 			}
-
-			var now = DateTime.Now;
 
 			try
 			{
@@ -1119,7 +1203,8 @@ namespace LinqToDB.Data
 						TraceLevel     = TraceLevel.Info,
 						DataConnection = this,
 						Command        = Command,
-						ExecutionTime  = DateTime.Now - now,
+						StartTime      = now,
+						ExecutionTime  = sw.Elapsed,
 					});
 				}
 
@@ -1134,7 +1219,8 @@ namespace LinqToDB.Data
 						TraceLevel     = TraceLevel.Error,
 						DataConnection = this,
 						Command        = Command,
-						ExecutionTime  = DateTime.Now - now,
+						StartTime      = now,
+						ExecutionTime  = sw.Elapsed,
 						Exception      = ex,
 					});
 				}
@@ -1154,6 +1240,9 @@ namespace LinqToDB.Data
 				using (DataProvider.ExecuteScope())
 					return Command.ExecuteReader(GetCommandBehavior(commandBehavior));
 
+			var now = DateTime.UtcNow;
+			var sw  = Stopwatch.StartNew();
+
 			if (TraceSwitch.TraceInfo)
 			{
 				OnTraceConnection(new TraceInfo(TraceInfoStep.BeforeExecute)
@@ -1161,10 +1250,9 @@ namespace LinqToDB.Data
 					TraceLevel     = TraceLevel.Info,
 					DataConnection = this,
 					Command        = Command,
+					StartTime      = now,
 				});
 			}
-
-			var now = DateTime.Now;
 
 			try
 			{
@@ -1180,7 +1268,8 @@ namespace LinqToDB.Data
 						TraceLevel     = TraceLevel.Info,
 						DataConnection = this,
 						Command        = Command,
-						ExecutionTime  = DateTime.Now - now,
+						StartTime      = now,
+						ExecutionTime  = sw.Elapsed,
 					});
 				}
 
@@ -1195,7 +1284,8 @@ namespace LinqToDB.Data
 						TraceLevel     = TraceLevel.Error,
 						DataConnection = this,
 						Command        = Command,
-						ExecutionTime  = DateTime.Now - now,
+						StartTime      = now,
+						ExecutionTime  = sw.Elapsed,
 						Exception      = ex,
 					});
 				}
@@ -1369,11 +1459,17 @@ namespace LinqToDB.Data
 		public object Clone()
 		{
 			var connection =
-				_connection == null                 ? null :
+				(_connection == null                 ? null :
 				_connection is ICloneable cloneable ? (IDbConnection)cloneable.Clone() :
-				                                      null;
+				                                      null) ?? _connectionFactory?.Invoke();
 
-			return new DataConnection(ConfigurationString, DataProvider, ConnectionString, connection, MappingSchema);
+			// https://github.com/linq2db/linq2db/issues/1486
+			// when there is no ConnectionString and provider doesn't support connection cloning
+			// try to get ConnectionString from _connection
+			// will not work for providers that remove security information from connection string
+			var connectionString = ConnectionString ?? (connection == null ? _connection?.ConnectionString : null);
+
+			return new DataConnection(ConfigurationString, DataProvider, connectionString, connection, MappingSchema);
 		}
 
 		#endregion

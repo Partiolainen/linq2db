@@ -123,6 +123,7 @@ void LoadServerMetadata(DataConnection dataConnection)
 			table = new Table
 			{
 				TableSchema             = t,
+				IsDefaultSchema         = t.IsDefaultSchema,
 				Schema                  = t.IsDefaultSchema && !IncludeDefaultSchema || string.IsNullOrEmpty(t.SchemaName)? null : t.SchemaName,
 				BaseClass               = BaseEntityClass,
 				TableName               = t.TableName,
@@ -146,7 +147,7 @@ void LoadServerMetadata(DataConnection dataConnection)
 						IsPrimaryKey    = c.IsPrimaryKey,
 						PrimaryKeyOrder = c.PrimaryKeyOrder,
 						MemberName      = CheckType(c.SystemType, c.MemberName),
-						Type            = ConvertTableColumnMemberType(t, c),
+						TypeBuilder     = () => ConvertTableColumnMemberType(t, c),
 						SkipOnInsert    = c.SkipOnInsert,
 						SkipOnUpdate    = c.SkipOnUpdate,
 						Description     = c.Description,
@@ -257,14 +258,15 @@ void LoadServerMetadata(DataConnection dataConnection)
 			key = p.IsDefaultSchema ? p.ProcedureName : p.SchemaName + "." + p.ProcedureName,
 			proc = new Procedure
 			{
-				Schema          = (p.IsDefaultSchema && !IncludeDefaultSchema) || string.IsNullOrEmpty(p.SchemaName)? null : p.SchemaName,
-				ProcedureName   = p.ProcedureName,
-				Name            = ToValidName(p.MemberName, true),
-				IsFunction      = p.IsFunction,
-				IsTableFunction = p.IsTableFunction,
-				IsDefaultSchema = p.IsDefaultSchema,
-				IsLoaded        = p.IsLoaded,
-				ResultTable     = p.ResultTable == null ? null :
+				Schema              = (p.IsDefaultSchema && !IncludeDefaultSchema) || string.IsNullOrEmpty(p.SchemaName)? null : p.SchemaName,
+				ProcedureName       = p.ProcedureName,
+				Name                = ToValidName(p.MemberName, true),
+				IsFunction          = p.IsFunction,
+				IsTableFunction     = p.IsTableFunction,
+				IsAggregateFunction = p.IsAggregateFunction,
+				IsDefaultSchema     = p.IsDefaultSchema,
+				IsLoaded            = p.IsLoaded,
+				ResultTable         = p.ResultTable == null ? null :
 					new Table
 					{
 						TypeName = ToValidName(
@@ -282,7 +284,7 @@ void LoadServerMetadata(DataConnection dataConnection)
 								IsPrimaryKey    = c.IsPrimaryKey,
 								PrimaryKeyOrder = c.PrimaryKeyOrder,
 								MemberName      = CheckColumnName(CheckType(c.SystemType, c.MemberName)),
-								Type            = ConvertProcedureColumnMemberType(p, c),
+								TypeBuilder     = () => ConvertProcedureColumnMemberType(p, c),
 								SkipOnInsert    = c.SkipOnInsert,
 								SkipOnUpdate    = c.SkipOnUpdate,
 								Description     = c.Description,
@@ -307,7 +309,7 @@ void LoadServerMetadata(DataConnection dataConnection)
 						IsOut         = pr.IsOut,
 						IsResult      = pr.IsResult,
 						Size          = pr.Size,
-						ParameterName = CheckParameterName(pr.ParameterName),
+						ParameterName = CheckParameterName(CheckType(pr.SystemType, pr.ParameterName)),
 						ParameterType = pr.ParameterType,
 						SystemType    = pr.SystemType,
 						DataType      = pr.DataType.ToString(),
@@ -436,6 +438,17 @@ void LoadMetadata(DataConnection dataConnection)
 			if (col.MemberName == t.TypeName)
 				col.MemberName += "_Column";
 		}
+
+		foreach (var fk in t.ForeignKeys.Values)
+		{
+			if (KeyWords.Contains(fk.MemberName))
+				fk.MemberName = "@" + fk.MemberName;
+
+			fk.MemberName = ConvertToCompilable(fk.MemberName, true);
+
+			if (fk.MemberName == t.TypeName)
+				fk.MemberName += "_FK";
+		}
 	}
 
 	foreach (var t in Tables.Values)
@@ -466,6 +479,20 @@ void LoadMetadata(DataConnection dataConnection)
 
 				col.MemberName = SuggestNoDuplicate(mayDuplicate, col.MemberName, null);
 			}
+		}
+	}
+
+	foreach (var proc in Procedures.Values)
+	{
+	    proc.Name = ConvertToCompilable(proc.Name, false);
+
+		if (KeyWords.Contains(proc.Name))
+			proc.Name = "@" + proc.Name;
+
+		foreach (var param in proc.ProcParameters)
+		{
+			if (KeyWords.Contains(param.ParameterName))
+				param.ParameterName = ConvertToCompilable("@" + param.ParameterName, true);
 		}
 	}
 
@@ -641,7 +668,7 @@ public class TableContext
 		var c = Transformation.GetColumn(TableName, columnName);
 
 		if (MemberName  != null) c.MemberName  = MemberName;
-		if (Type        != null) c.Type        = Type;
+		if (Type        != null) c.TypeBuilder = () => Type;
 		if (IsNullable  != null) c.IsNullable  = IsNullable.Value;
 		if (Conditional != null) c.Conditional = Conditional;
 
@@ -676,6 +703,7 @@ public partial class Table : Class
 	public MemberBase  DataContextProperty     { get; set; }
 	public bool        IsView                  { get; set; }
 	public bool        IsProviderSpecific      { get; set; }
+	public bool        IsDefaultSchema         { get; set; }
 	public string      Description             { get; set; }
 	public string      AliasPropertyName       { get; set; }
 	public string      AliasTypeName           { get; set; }
@@ -765,12 +793,13 @@ public partial class ForeignKey : Property
 
 public partial class Procedure : Method
 {
-	public string Schema          { get; set; }
-	public string ProcedureName   { get; set; }
-	public bool   IsFunction      { get; set; }
-	public bool   IsTableFunction { get; set; }
-	public bool   IsDefaultSchema { get; set; }
-	public bool   IsLoaded        { get; set; }
+	public string Schema              { get; set; }
+	public string ProcedureName       { get; set; }
+	public bool   IsFunction          { get; set; }
+	public bool   IsTableFunction     { get; set; }
+	public bool   IsAggregateFunction { get; set; }
+	public bool   IsDefaultSchema     { get; set; }
+	public bool   IsLoaded            { get; set; }
 
 	public Table           ResultTable     { get; set; }
 	public Exception       ResultException { get; set; }

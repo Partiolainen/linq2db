@@ -8,7 +8,8 @@ namespace LinqToDB.SchemaProvider
 	public class ProcedureParameterInfo
 	{
 		/// <summary>
-		/// Gets or sets fully-qualified procedure name.
+		/// Gets or sets unique procedure identifier.
+		/// NOTE: this is not fully-qualified procedure name (even if it used right now for some providers as procedure identifier).
 		/// </summary>
 		public string ProcedureID;
 		/// <summary>
@@ -47,5 +48,17 @@ namespace LinqToDB.SchemaProvider
 		/// Gets or sets return value parameter flag.
 		/// </summary>
 		public bool   IsResult;
+		/// <summary>
+		/// Parameter's user-defined type(UDT) catalog/database.
+		/// </summary>
+		public string UDTCatalog;
+		/// <summary>
+		/// Parameter's user-defined type(UDT) schema/owner.
+		/// </summary>
+		public string UDTSchema;
+		/// <summary>
+		/// Parameter's user-defined type(UDT) name.
+		/// </summary>
+		public string UDTName;
 	}
 }

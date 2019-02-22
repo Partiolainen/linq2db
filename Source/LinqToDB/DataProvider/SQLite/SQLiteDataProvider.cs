@@ -7,6 +7,7 @@ using System.Linq.Expressions;
 namespace LinqToDB.DataProvider.SQLite
 {
 	using Data;
+	using Common;
 	using Extensions;
 	using Mapping;
 	using SchemaProvider;
@@ -32,6 +33,8 @@ namespace LinqToDB.DataProvider.SQLite
 			SqlProviderFlags.IsInsertOrUpdateSupported         = false;
 			SqlProviderFlags.IsUpdateSetTableAliasSupported    = false;
 			SqlProviderFlags.IsCommonTableExpressionsSupported = true;
+			SqlProviderFlags.IsDistinctOrderBySupported        = true;
+			SqlProviderFlags.IsSubQueryOrderBySupported        = true;
 
 			SetCharField("char",  (r,i) => r.GetString(i).TrimEnd(' '));
 			SetCharField("nchar", (r,i) => r.GetString(i).TrimEnd(' '));
@@ -103,18 +106,23 @@ namespace LinqToDB.DataProvider.SQLite
 			return base.IsDBNullAllowed(reader, idx);
 		}
 
-		public override void SetParameter(IDbDataParameter parameter, string name, DataType dataType, object value)
+		public override void SetParameter(IDbDataParameter parameter, string name, DbDataType dataType, object value)
 		{
+			if (Name == ProviderName.SQLiteMS && value is char)
+			{
+				value = value.ToString();
+			}
+
 			base.SetParameter(parameter, "@" + name, dataType, value);
 		}
 
-		protected override void SetParameterType(IDbDataParameter parameter, DataType dataType)
+		protected override void SetParameterType(IDbDataParameter parameter, DbDataType dataType)
 		{
-			switch (dataType)
+			switch (dataType.DataType)
 			{
-				case DataType.UInt32    : dataType = DataType.Int64;    break;
-				case DataType.UInt64    : dataType = DataType.Decimal;  break;
-				case DataType.DateTime2 : dataType = DataType.DateTime; break;
+				case DataType.UInt32    : dataType = dataType.WithDataType(DataType.Int64);    break;
+				case DataType.UInt64    : dataType = dataType.WithDataType(DataType.Decimal);  break;
+				case DataType.DateTime2 : dataType = dataType.WithDataType(DataType.DateTime); break;
 			}
 
 			base.SetParameterType(parameter, dataType);
@@ -219,11 +227,11 @@ namespace LinqToDB.DataProvider.SQLite
 		#region BulkCopy
 
 		public override BulkCopyRowsCopied BulkCopy<T>(
-			[JetBrains.Annotations.NotNull] DataConnection dataConnection, BulkCopyOptions options, IEnumerable<T> source)
+			[JetBrains.Annotations.NotNull] ITable<T> table, BulkCopyOptions options, IEnumerable<T> source)
 		{
 			return new SQLiteBulkCopy().BulkCopy(
 				options.BulkCopyType == BulkCopyType.Default ? SQLiteTools.DefaultBulkCopyType : options.BulkCopyType,
-				dataConnection,
+				table,
 				options,
 				source);
 		}

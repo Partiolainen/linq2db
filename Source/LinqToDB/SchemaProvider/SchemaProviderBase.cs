@@ -30,6 +30,8 @@ namespace LinqToDB.SchemaProvider
 			return null;
 		}
 
+		// TODO: get rid of list and use dictionary, because now we perform joins on this property and it will produce
+		// invalid results if list contains duplicates
 		protected List<DataTypeInfo> DataTypes;
 		protected HashSet<string>    IncludedSchemas;
 		protected HashSet<string>    ExcludedSchemas;
@@ -117,7 +119,7 @@ namespace LinqToDB.SchemaProvider
 					var dataType   = column.c.DataType;
 					var systemType = GetSystemType(dataType, column.c.ColumnType, column.dt, column.c.Length, column.c.Precision, column.c.Scale);
 					var isNullable = column.c.IsNullable;
-					var columnType = column.c.ColumnType ?? GetDbType(dataType, column.dt, column.c.Length, column.c.Precision, column.c.Scale);
+					var columnType = column.c.ColumnType ?? GetDbType(dataType, column.dt, column.c.Length, column.c.Precision, column.c.Scale, null, null, null);
 
 					column.t.Columns.Add(new ColumnSchema
 					{
@@ -223,6 +225,7 @@ namespace LinqToDB.SchemaProvider
 							MemberName          = ToValidName(sp.ProcedureName),
 							IsFunction          = sp.IsFunction,
 							IsTableFunction     = sp.IsTableFunction,
+							IsResultDynamic     = sp.IsResultDynamic,
 							IsAggregateFunction = sp.IsAggregateFunction,
 							IsDefaultSchema     = sp.IsDefaultSchema,
 							Parameters          =
@@ -239,7 +242,7 @@ namespace LinqToDB.SchemaProvider
 								select new ParameterSchema
 								{
 									SchemaName           = pr.ParameterName,
-									SchemaType           = GetDbType(pr.DataType, dt, pr.Length, pr.Precision, pr.Scale),
+									SchemaType           = GetDbType(pr.DataType, dt, pr.Length, pr.Precision, pr.Scale, pr.UDTCatalog, pr.UDTSchema, pr.UDTName),
 									IsIn                 = pr.IsIn,
 									IsOut                = pr.IsOut,
 									IsResult             = pr.IsResult,
@@ -252,7 +255,6 @@ namespace LinqToDB.SchemaProvider
 								}
 							).ToList()
 						} into ps
-						where ps.Parameters.All(p => p.SchemaType != "table type")
 						select ps
 					).ToList();
 
@@ -270,7 +272,7 @@ namespace LinqToDB.SchemaProvider
 					{
 						foreach (var procedure in procedures)
 						{
-							if ((!procedure.IsFunction || procedure.IsTableFunction) && options.LoadProcedure(procedure))
+							if (!procedure.IsResultDynamic && (!procedure.IsFunction || procedure.IsTableFunction) && options.LoadProcedure(procedure))
 							{
 								var commandText = sqlProvider.ConvertTableName(new StringBuilder(),
 									 procedure.CatalogName,
@@ -338,6 +340,25 @@ namespace LinqToDB.SchemaProvider
 			return null;
 		}
 
+		/// <summary>
+		/// Builds table function call command.
+		/// </summary>
+		protected virtual string BuildTableFunctionLoadTableSchemaCommand(ProcedureSchema procedure, string commandText)
+		{
+			commandText = "SELECT * FROM " + commandText + "(";
+
+			for (var i = 0; i < procedure.Parameters.Count; i++)
+			{
+				if (i != 0)
+					commandText += ",";
+				commandText += "NULL";
+			}
+
+			commandText += ")";
+
+			return commandText;
+		}
+
 		protected virtual void LoadProcedureTableSchema(
 			DataConnection dataConnection, ProcedureSchema procedure, string commandText, List<TableSchema> tables)
 		{
@@ -346,39 +367,14 @@ namespace LinqToDB.SchemaProvider
 
 			if (procedure.IsTableFunction)
 			{
-				commandText = "SELECT * FROM " + commandText + "(";
-
-				for (var i = 0; i < procedure.Parameters.Count; i++)
-				{
-					if (i != 0)
-						commandText += ",";
-					commandText += "NULL";
-				}
-
-				commandText += ")";
+				commandText = BuildTableFunctionLoadTableSchemaCommand(procedure, commandText);
 				commandType = CommandType.Text;
 				parameters  = new DataParameter[0];
 			}
 			else
 			{
 				commandType = CommandType.StoredProcedure;
-				parameters  = procedure.Parameters.Select(p =>
-					new DataParameter
-					{
-						Name      = p.ParameterName,
-						Value     =
-							p.SystemType == typeof(string)   ? "" :
-							p.SystemType == typeof(DateTime) ? DateTime.Now :
-								DefaultValue.GetValue(p.SystemType),
-						DataType  = p.DataType,
-						Size      = (int?)p.Size,
-						Direction =
-							p.IsIn ?
-								p.IsOut ?
-									ParameterDirection.InputOutput :
-									ParameterDirection.Input :
-								ParameterDirection.Output
-					}).ToArray();
+				parameters = procedure.Parameters.Select(BuildProcedureParameter).ToArray();
 			}
 
 			try
@@ -414,6 +410,28 @@ namespace LinqToDB.SchemaProvider
 			{
 				procedure.ResultException = ex;
 			}
+		}
+
+		protected virtual DataParameter BuildProcedureParameter(ParameterSchema p)
+		{
+			return new DataParameter
+			{
+				Name = p.ParameterName,
+				Value =
+					p.SystemType == typeof(string) ?
+						"" :
+						p.SystemType == typeof(DateTime) ?
+							DateTime.Now :
+							DefaultValue.GetValue(p.SystemType),
+				DataType = p.DataType,
+				Size = (int?)p.Size,
+				Direction =
+					p.IsIn ?
+						p.IsOut ?
+							ParameterDirection.InputOutput :
+							ParameterDirection.Input :
+						ParameterDirection.Output
+			};
 		}
 
 		protected virtual string GetProviderSpecificType(string dataType)
@@ -457,7 +475,7 @@ namespace LinqToDB.SchemaProvider
 				select new ColumnSchema
 				{
 					ColumnName           = columnName,
-					ColumnType           = GetDbType(columnType, dt, length, precision, scale),
+					ColumnType           = GetDbType(columnType, dt, length, precision, scale, null, null, null),
 					IsNullable           = isNullable,
 					MemberName           = ToValidName(columnName),
 					MemberType           = ToTypeName(systemType, isNullable),
@@ -521,7 +539,7 @@ namespace LinqToDB.SchemaProvider
 			return systemType;
 		}
 
-		protected virtual string GetDbType(string columnType, DataTypeInfo dataType, long? length, int? prec, int? scale)
+		protected virtual string GetDbType(string columnType, DataTypeInfo dataType, long? length, int? prec, int? scale, string udtCatalog, string udtSchema, string udtName)
 		{
 			var dbType = columnType;
 

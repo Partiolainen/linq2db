@@ -121,6 +121,32 @@ namespace LinqToDB.Extensions
 			return type.GetMembers(BindingFlags.Instance | BindingFlags.Public);
 		}
 
+		public static MemberInfo[] GetPublicInstanceValueMembers(this Type type)
+		{
+			var members = type.GetMembers(BindingFlags.Instance | BindingFlags.Public)
+				.Where(m => m.IsFieldEx() || m.IsPropertyEx() && ((PropertyInfo)m).GetIndexParameters().Length == 0)
+				.ToArray();
+
+			var baseType = type.BaseTypeEx();
+			if (baseType == null || baseType == typeof(object) || baseType == typeof(ValueType))
+				return members;
+
+			var results = new LinkedList<MemberInfo>();
+			var names = new HashSet<string>();
+			for (var t = type; t != typeof(object) && t != typeof(ValueType); t = t.BaseTypeEx())
+			{
+				foreach (var m in members.Where(_ => _.DeclaringType == t))
+				{
+					if (!names.Contains(m.Name))
+					{
+						results.AddFirst(m);
+						names.Add(m.Name);
+					}
+				}
+			}
+			return results.ToArray();
+		}
+
 		public static MemberInfo[] GetStaticMembersEx(this Type type, string name)
 		{
 			return type.GetMember(name, BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
@@ -622,8 +648,8 @@ namespace LinqToDB.Extensions
 		/// aren't a parent and it's child.</remarks>
 		public static bool IsSameOrParentOf([NotNull] this Type parent, [NotNull] Type child)
 		{
-			if (parent == null) throw new ArgumentNullException("parent");
-			if (child  == null) throw new ArgumentNullException("child");
+			if (parent == null) throw new ArgumentNullException(nameof(parent));
+			if (child  == null) throw new ArgumentNullException(nameof(child));
 
 			if (parent == child ||
 				child.IsEnumEx() && Enum.GetUnderlyingType(child) == parent ||
@@ -654,6 +680,51 @@ namespace LinqToDB.Extensions
 			}
 
 			return false;
+		}
+
+		/// <summary>
+		/// Determines whether the <paramref name="type"/> derives from the specified <paramref name="check"/>.
+		/// </summary>
+		/// <remarks>
+		/// This method also returns false if <paramref name="type"/> and the <paramref name="check"/> are equal.
+		/// </remarks>
+		/// <param name="type">The type to test.</param>
+		/// <param name="check">The type to compare with. </param>
+		/// <returns>
+		/// true if the <paramref name="type"/> derives from <paramref name="check"/>; otherwise, false.
+		/// </returns>
+		[Pure]
+		internal static bool IsSubClassOf([NotNull] this Type type, [NotNull] Type check)
+		{
+			if (type  == null) throw new ArgumentNullException(nameof(type));
+			if (check == null) throw new ArgumentNullException(nameof(check));
+
+			if (type == check)
+				return false;
+
+			while (true)
+			{
+				if (check.IsInterfaceEx())
+					// ReSharper disable once LoopCanBeConvertedToQuery
+					foreach (var interfaceType in type.GetInterfaces())
+						if (interfaceType == check || interfaceType.IsSubClassOf(check))
+							return true;
+
+				if (type.IsGenericTypeEx() && !type.IsGenericTypeDefinitionEx())
+				{
+					var definition = type.GetGenericTypeDefinition();
+					if (definition == check || definition.IsSubClassOf(check))
+						return true;
+				}
+
+				type = type.BaseTypeEx();
+
+				if (type == null)
+					return false;
+
+				if (type == check)
+					return true;
+			}
 		}
 
 		public static Type GetGenericType([NotNull] this Type genericType, Type type)
@@ -821,6 +892,9 @@ namespace LinqToDB.Extensions
 		/// and, therefore, can be treated as scalar types.</remarks>
 		public static bool IsScalar(this Type type, bool checkArrayElementType = true)
 		{
+			if (type == typeof(byte[]))
+				return true;
+
 			while (checkArrayElementType && type.IsArray)
 				type = type.GetElementType();
 

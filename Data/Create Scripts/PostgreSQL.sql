@@ -4,6 +4,8 @@ GO
 DROP TABLE IF EXISTS "Patient"
 GO
 
+DROP FUNCTION IF EXISTS "TestTableFunctionSchema"()
+GO
 DROP TABLE IF EXISTS "Person"
 GO
 
@@ -32,7 +34,7 @@ GO
 
 
 CREATE TABLE "Person"
-( 
+(
 	--PersonID   INTEGER PRIMARY KEY DEFAULT NEXTVAL('Seq'),
 	"PersonID"   SERIAL PRIMARY KEY,
 	"FirstName"  VARCHAR(50) NOT NULL,
@@ -48,7 +50,7 @@ INSERT INTO "Person" ("FirstName", "LastName", "Gender") VALUES ('Tester', 'Test
 GO
 INSERT INTO "Person" ("FirstName", "LastName", "Gender") VALUES ('Jane',   'Doe',       'F')
 GO
-INSERT INTO "Person" ("FirstName", "LastName", "Gender") VALUES ('Jürgen', 'König',     'M')
+INSERT INTO "Person" ("FirstName", "LastName", "MiddleName", "Gender") VALUES ('Jürgen', 'König', 'Ko', 'M')
 GO
 -- Doctor Table Extension
 
@@ -166,6 +168,9 @@ GO
 DROP TABLE IF EXISTS "SequenceTest3"
 GO
 
+DROP TABLE IF EXISTS "SequenceCustomNamingTest"
+GO
+
 DROP SEQUENCE IF EXISTS SequenceTestSeq
 GO
 
@@ -177,6 +182,10 @@ GO
 
 CREATE SEQUENCE "SequenceTest2_ID_seq" INCREMENT 1 START 1
 GO
+
+DROP SEQUENCE IF EXISTS test_schema."SequenceCustomNamingTest__seq__"
+GO
+
 
 CREATE TABLE "SequenceTest1"
 (
@@ -198,7 +207,6 @@ CREATE TABLE "SequenceTest3"
 	"Value" VARCHAR(50)
 )
 GO
-
 
 DROP TABLE IF EXISTS "TestIdentity"
 GO
@@ -268,11 +276,22 @@ CREATE TABLE "AllTypes"
 	"inetDataType"        inet                     NULL,
 	"cidrDataType"        cidr                     NULL,
 	"macaddrDataType"     macaddr                  NULL,
-	--PGSQL 10+
-	--"macaddr8DataType"  macaddr8                 NULL,
+-- SKIP PostgreSQL.9.2 BEGIN
+-- SKIP PostgreSQL.9.3 BEGIN
+-- SKIP PostgreSQL.9.5 BEGIN
+-- SKIP PostgreSQL BEGIN
+	"macaddr8DataType"  macaddr8                   NULL,
+-- SKIP PostgreSQL.9.2 END
+-- SKIP PostgreSQL.9.3 END
+-- SKIP PostgreSQL.9.5 END
+-- SKIP PostgreSQL END
 
 	"jsonDataType"        json                     NULL,
-	"jsonbDataType"       jsonb                    NULL,
+-- SKIP PostgreSQL.9.2 BEGIN
+-- SKIP PostgreSQL.9.3 BEGIN
+"jsonbDataType"       jsonb                    NULL,
+-- SKIP PostgreSQL.9.2 END
+-- SKIP PostgreSQL.9.3 END
 
 	"xmlDataType"         xml                      NULL,
 	"varBitDataType"      varbit                   NULL
@@ -428,6 +447,18 @@ GO
 CREATE SEQUENCE test_schema."TestSchemaIdentity_ID_seq" INCREMENT 1 START 1
 GO
 
+
+CREATE SEQUENCE test_schema."SequenceCustomNamingTest__seq__" INCREMENT 1 START 1
+GO
+
+CREATE TABLE "SequenceCustomNamingTest"
+(
+	"ID"    INTEGER PRIMARY KEY DEFAULT NEXTVAL('test_schema."SequenceCustomNamingTest__seq__"'),
+	"Value" VARCHAR(50)
+)
+GO
+
+
 CREATE TABLE test_schema."TestSchemaIdentity" (
 	"ID" INTEGER PRIMARY KEY DEFAULT NEXTVAL('test_schema."TestSchemaIdentity_ID_seq"')
 )
@@ -522,5 +553,45 @@ BEGIN
 	INSERT INTO dbo.AllTypes(char20DataType) VALUES('issue792');
 END;
 $BODY$
-	LANGUAGE plpgsql;
+	LANGUAGE PLPGSQL;
+GO
+
+CREATE OR REPLACE FUNCTION "TestTableFunctionSchema"() RETURNS SETOF "AllTypes"
+AS $$ SELECT * FROM "AllTypes" $$ LANGUAGE SQL;
+GO
+
+CREATE OR REPLACE FUNCTION "TestFunctionParameters"(param1 INT, INOUT param2 INT, OUT param3 INT)
+AS $$ SELECT param1, param2 $$ LANGUAGE SQL;
+GO
+
+CREATE OR REPLACE FUNCTION "TestTableFunction"(param1 INT) RETURNS TABLE(param2 INT)
+AS $$ SELECT param1 UNION ALL SELECT param1 $$ LANGUAGE SQL;
+GO
+
+CREATE OR REPLACE FUNCTION "TestTableFunction1"(param1 INT, param2 INT) RETURNS TABLE(param3 INT, param4 INT)
+AS $$ SELECT param1, 23 UNION ALL SELECT 333, param2 $$ LANGUAGE SQL;
+GO
+
+CREATE OR REPLACE FUNCTION "TestScalarFunction"(param INT) RETURNS VARCHAR(10)
+AS $$ BEGIN RETURN 'done'; END $$ LANGUAGE PLPGSQL;
+GO
+
+CREATE OR REPLACE FUNCTION "TestSingleOutParameterFunction"(param1 INT, OUT param2 INT)
+AS $$ BEGIN param2 := param1 + 123; END $$ LANGUAGE PLPGSQL;
+GO
+
+DROP AGGREGATE IF EXISTS test_avg(float8)
+GO
+CREATE AGGREGATE test_avg(float8)
+(
+	sfunc = float8_accum,
+	stype = float8[],
+	finalfunc = float8_avg,
+	initcond = '{0,0,0}'
+);
+
+GO
+
+CREATE OR REPLACE FUNCTION "bool"(param INT) RETURNS VARCHAR(20)
+AS $$ BEGIN RETURN 'issue1295test'; END $$ LANGUAGE PLPGSQL;
 GO

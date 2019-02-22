@@ -11,11 +11,12 @@ namespace LinqToDB.DataProvider.Oracle
 	using Configuration;
 	using Data;
 	using Extensions;
+
 	public enum AlternativeBulkCopy
 	{
 		InsertAll,
 		InsertInto,
-		InsertDual	
+		InsertDual
 	}
 
 	public static partial class OracleTools
@@ -146,6 +147,7 @@ namespace LinqToDB.DataProvider.Oracle
 			IEnumerable<T>             source,
 			int                        maxBatchSize       = 1000,
 			Action<BulkCopyRowsCopied> rowsCopiedCallback = null)
+			where T : class
 		{
 			return dataConnection.BulkCopy(
 				new BulkCopyOptions
@@ -163,6 +165,7 @@ namespace LinqToDB.DataProvider.Oracle
 			int?                       bulkCopyTimeout    = null,
 			int                        notifyAfter        = 0,
 			Action<BulkCopyRowsCopied> rowsCopiedCallback = null)
+			where T : class
 		{
 			return dataConnection.BulkCopy(
 				new BulkCopyOptions
@@ -179,5 +182,13 @@ namespace LinqToDB.DataProvider.Oracle
 		public static AlternativeBulkCopy UseAlternativeBulkCopy = AlternativeBulkCopy.InsertAll;
 
 		public static Func<IDataReader,int,decimal> DataReaderGetDecimal = (dr, i) => dr.GetDecimal(i);
+
+		/// <summary>
+		/// Gets or sets flag to tell LinqToDB to quote identifiers, if they contain lowercase letters.
+		/// Default value: <c>true</c>.
+		/// This flag added for backward compatibility and will be removed later, so it is recommended to
+		/// set it to <c>false</c> and and fix mappings to use uppercase letters for non-quoted identifiers.
+		/// </summary>
+		public static bool DontEscapeLowercaseIdentifiers { get; set; } = true;
 	}
 }

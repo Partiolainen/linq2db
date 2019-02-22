@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 
 namespace LinqToDB.Linq
 {
+	using Async;
 	using Builder;
 	using Data;
 	using Common;
@@ -165,7 +166,8 @@ namespace LinqToDB.Linq
 
 		public bool DoNotCache;
 
-		public Func<IDataContext,Expression,object[],IEnumerable<T>> GetIEnumerable;
+		public Func<IDataContext,Expression,object[],IEnumerable<T>>      GetIEnumerable;
+		public Func<IDataContext,Expression,object[],IAsyncEnumerable<T>> GetIAsyncEnumerable;
 		public Func<IDataContext,Expression,object[],Func<T,bool>,CancellationToken,Task> GetForEachAsync;
 
 		#endregion
@@ -214,11 +216,10 @@ namespace LinqToDB.Linq
 
 		public static Query<T> GetQuery(IDataContext dataContext, ref Expression expr)
 		{
+			expr = ExpressionBuilder.ExpandExpression(expr);
+
 			if (dataContext is IExpressionPreprocessor preprocessor)
 				expr = preprocessor.ProcessExpression(expr);
-
-			if (Configuration.Linq.UseBinaryAggregateExpression)
-				expr = ExpressionBuilder.AggregateExpression(expr);
 
 			if (Configuration.Linq.DisableQueryCache)
 				return CreateQuery(dataContext, expr);
@@ -349,17 +350,20 @@ namespace LinqToDB.Linq
 			Expression                         expression,
 			Func<Expression,object[],object>   accessor,
 			Func<Expression,object[],DataType> dataTypeAccessor,
+			Func<Expression,object[],string>   dbTypeAccessor,
 			SqlParameter                       sqlParameter)
 		{
 			Expression       = expression;
 			Accessor         = accessor;
 			DataTypeAccessor = dataTypeAccessor;
+			DbTypeAccessor   = dbTypeAccessor;
 			SqlParameter     = sqlParameter;
 		}
 
 		public          Expression                         Expression;
 		public readonly Func<Expression,object[],object>   Accessor;
 		public readonly Func<Expression,object[],DataType> DataTypeAccessor;
+		public readonly Func<Expression,object[],string>   DbTypeAccessor;
 		public readonly SqlParameter                       SqlParameter;
 	}
 }
